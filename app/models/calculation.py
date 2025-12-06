@@ -11,7 +11,7 @@ It demonstrates several advanced patterns:
 4. Single Responsibility Principle - Each calculation type does one thing
 
 These models are designed for a calculator application that supports
-basic mathematical operations: addition, subtraction, multiplication, and division.
+basic mathematical operations: addition, subtraction, multiplication, modulo and division.
 """
 
 from datetime import datetime
