@@ -178,6 +178,7 @@ class AbstractCalculation:
             'subtraction': Subtraction,
             'multiplication': Multiplication,
             'division': Division,
+            'modulo': Modulo
         }
         calculation_class = calculation_classes.get(calculation_type.lower())
         if not calculation_class:
@@ -353,4 +354,42 @@ class Division(Calculation):
             if value == 0:
                 raise ValueError("Cannot divide by zero.")
             result /= value
+        return result
+
+
+class Modulo(Calculation):
+    """
+    Modulo calculation subclass.
+
+    Implements modulo operation between the first value and each subsequent one.
+    Examples:
+        [10, 3] -> 10 % 3 = 1
+        [20, 4, 3] -> ((20 % 4) % 3) = 1
+
+    Special case handling:
+        - Modulo requires at least two numbers
+    """
+    __mapper_args__ = {"polymorphic_identity": "modulo"}
+
+    def get_result(self) -> float:
+        """
+        Calculate modulo sequentially from the first value.
+
+        Returns:
+            float: The result of the modulo sequence
+            
+        Raises:
+            ValueError: If inputs are invalid or modulo by zero
+        """
+        if not isinstance(self.inputs, list):
+            raise ValueError("Inputs must be a list of numbers.")
+        if len(self.inputs) < 2:
+            raise ValueError("Inputs must be a list with at least two numbers.")
+
+        result = self.inputs[0]
+        for value in self.inputs[1:]:
+            if value == 0:
+                raise ValueError("Cannot modulo by zero.")
+            result %= value
+
         return result
