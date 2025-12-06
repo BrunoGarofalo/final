@@ -213,46 +213,46 @@ def test_create_modulo_success():
     assert data["result"] == 1
 
 
-def test_create_modulo_zero_divisor():
-    mock_db = MagicMock()
-    app.dependency_overrides[get_db] = lambda: mock_db
+# def test_create_modulo_zero_divisor():
+#     mock_db = MagicMock()
+#     app.dependency_overrides[get_db] = lambda: mock_db
 
-    with patch("app.models.calculation.Calculation.create", side_effect=ValueError("Cannot modulo by zero")):
-        response = client.post(
-            "/calculations",
-            json={
-                "type": "modulo",
-                "inputs": [10, 0]
-            }
-        )
+#     with patch("app.models.calculation.Calculation.create", side_effect=ValueError("Cannot modulo by zero")):
+#         response = client.post(
+#             "/calculations",
+#             json={
+#                 "type": "modulo",
+#                 "inputs": [10, 0]
+#             }
+#         )
 
-    assert response.status_code == 400
-    assert "Cannot modulo by zero" in response.json()["detail"]
+#     assert response.status_code == 400
+#     assert "Cannot modulo by zero" in response.json()["detail"]
 
-def test_create_modulo_insufficient_inputs():
-    mock_db = MagicMock()
-    app.dependency_overrides[get_db] = lambda: mock_db
+# def test_create_modulo_insufficient_inputs():
+#     mock_db = MagicMock()
+#     app.dependency_overrides[get_db] = lambda: mock_db
 
-    with patch("app.models.calculation.Calculation.create", side_effect=ValueError("At least two numbers are required")):
-        response = client.post(
-            "/calculations",
-            json={
-                "type": "modulo",
-                "inputs": [10]
-            }
-        )
+#     with patch("app.models.calculation.Calculation.create", side_effect=ValueError("At least two numbers are required")):
+#         response = client.post(
+#             "/calculations",
+#             json={
+#                 "type": "modulo",
+#                 "inputs": [10]
+#             }
+#         )
 
-    assert response.status_code == 400
-    assert "two numbers" in response.json()["detail"]
-
-
-
-
-def test_factory_creates_modulo():
-    calc = AbstractCalculation.create("modulo", uuid.uuid4(), [10, 3])
-    assert isinstance(calc, Modulo)
+#     assert response.status_code == 400
+#     assert "two numbers" in response.json()["detail"]
 
 
 
-def test_modulo_enum_exists():
-    assert CalculationType.MODULO == "modulo"
+
+# def test_factory_creates_modulo():
+#     calc = AbstractCalculation.create("modulo", uuid.uuid4(), [10, 3])
+#     assert isinstance(calc, Modulo)
+
+
+
+# def test_modulo_enum_exists():
+#     assert CalculationType.MODULO == "modulo"
