@@ -177,8 +177,7 @@ app.dependency_overrides[get_db] = lambda: MagicMock()
 from app.auth.dependencies import get_current_active_user
 app.dependency_overrides[get_current_active_user] = override_current_user
 
-
-
+from datetime import datetime, timezone
 
 def test_create_modulo_success():
     mock_db = MagicMock()
@@ -192,8 +191,8 @@ def test_create_modulo_success():
     fake_calc.type = "modulo"
     fake_calc.inputs = [10, 3]
     fake_calc.result = 1
-    fake_calc.created_at = "now"
-    fake_calc.updated_at = "now"
+    fake_calc.created_at = datetime.now(timezone.utc)
+    fake_calc.updated_at = datetime.now(timezone.utc)
 
     with patch("app.models.calculation.Calculation.create", return_value=fake_calc):
         with patch.object(fake_calc, "get_result", return_value=1):
