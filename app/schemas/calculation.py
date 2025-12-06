@@ -18,6 +18,8 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 
+from app.models import calculation
+
 class CalculationType(str, Enum):
     """
     Enumeration of valid calculation types.
@@ -36,6 +38,8 @@ class CalculationType(str, Enum):
     SUBTRACTION = "subtraction"
     MULTIPLICATION = "multiplication"
     DIVISION = "division"
+    MODULO = "modulo"
+
 
 class CalculationBase(BaseModel):
     """
@@ -126,10 +130,10 @@ class CalculationBase(BaseModel):
         """
         if len(self.inputs) < 2:
             raise ValueError("At least two numbers are required for calculation")
-        if self.type == CalculationType.DIVISION:
+        if self.type in (CalculationType.DIVISION, CalculationType.MODULO):
             # Prevent division by zero (skip the first value as numerator)
             if any(x == 0 for x in self.inputs[1:]):
-                raise ValueError("Cannot divide by zero")
+                raise ValueError(f"Cannot {self.type.value} by zero")
         return self
 
     model_config = ConfigDict(
