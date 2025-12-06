@@ -239,25 +239,28 @@ def test_divide_by_zero() -> None:
 
 
 def test_modulo_get_result_basic():
-    calc = modulo(10, 3)
-    assert calc.get_result() == 1  # 10 % 3 = 1
+    assert modulo(10, 3) == 1  # 10 % 3 = 1
 
-# def test_modulo_get_result_multiple():
-#     calc = modulo(user_id="u", inputs=[20, 3, 4])
-#     # 20 % 3 = 2; 2 % 4 = 2
-#     assert calc.get_result() == 2
+def test_modulo_get_result_multiple():
+    # ((20 % 3) % 4) = (2 % 4) = 2
+    result = modulo(modulo(20, 3), 4)
+    assert result == 2
 
-# def test_modulo_zero_divisor_raises():
-#     calc = modulo(user_id="u", inputs=[10, 0])
-#     with pytest.raises(ValueError):
-#         calc.get_result()
+def test_modulo_zero_divisor_raises():
+    with pytest.raises(ValueError):
+        modulo(10, 0)
 
-# def test_modulo_invalid_length_raises():
-#     calc = modulo(user_id="u", inputs=[10])
-#     with pytest.raises(ValueError):
-#         calc.get_result()
+def test_modulo_invalid_length_raises():
+    """
+    The function expects two numbers, so passing one number
+    should cause a TypeError due to missing argument.
+    """
+    with pytest.raises(TypeError):
+        modulo(10)  # missing second argument
 
-# def test_modulo_inputs_must_be_list():
-#     calc = modulo(user_id="u", inputs="not a list")
-#     with pytest.raises(ValueError):
-#         calc.get_result()
+def test_modulo_inputs_must_be_number():
+    """
+    Passing a non-numeric value should raise TypeError
+    """
+    with pytest.raises(TypeError):
+        modulo("not a number", 3)
