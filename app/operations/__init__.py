@@ -118,3 +118,12 @@ def divide(a: Number, b: Number) -> float:
     # Perform division of a by b and return the result as a float
     result = a / b
     return result
+
+
+def modulo(a, b):
+    # Check if the divisor is zero to prevent division by zero
+    if b == 0:
+        raise ValueError("Cannot modulo by zero")
+    
+    # Perform division of a by b and return the result as a float
+    return a % b
