@@ -2,7 +2,7 @@
 
 import pytest  # Import the pytest framework for writing and running tests
 from typing import Union  # Import Union for type hinting multiple possible types
-from app.operations import add, subtract, multiply, divide  # Import the calculator functions from the operations module
+from app.operations import add, subtract, multiply, divide, modulo  # Import the calculator functions from the operations module
 
 # Define a type alias for numbers that can be either int or float
 Number = Union[int, float]
@@ -232,3 +232,32 @@ def test_divide_by_zero() -> None:
     # Assert that the exception message contains the expected error message
     assert "Cannot divide by zero!" in str(excinfo.value), \
         f"Expected error message 'Cannot divide by zero!', but got '{excinfo.value}'"
+
+# ---------------------------------------------
+# Unit Tests for the 'modulo' Function
+# ---------------------------------------------
+
+
+def test_modulo_get_result_basic():
+    calc = Modulo(user_id="u", inputs=[10, 3])
+    assert calc.get_result() == 1  # 10 % 3 = 1
+
+def test_modulo_get_result_multiple():
+    calc = Modulo(user_id="u", inputs=[20, 3, 4])
+    # 20 % 3 = 2; 2 % 4 = 2
+    assert calc.get_result() == 2
+
+def test_modulo_zero_divisor_raises():
+    calc = Modulo(user_id="u", inputs=[10, 0])
+    with pytest.raises(ValueError):
+        calc.get_result()
+
+def test_modulo_invalid_length_raises():
+    calc = Modulo(user_id="u", inputs=[10])
+    with pytest.raises(ValueError):
+        calc.get_result()
+
+def test_modulo_inputs_must_be_list():
+    calc = Modulo(user_id="u", inputs="not a list")
+    with pytest.raises(ValueError):
+        calc.get_result()

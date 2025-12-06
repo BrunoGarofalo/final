@@ -1,5 +1,12 @@
 import pytest
 import uuid
+from unittest.mock import MagicMock, patch
+from fastapi.testclient import TestClient
+from app.models.calculation import AbstractCalculation, Modulo
+from app.schemas.calculation import CalculationType
+
+from app.main import app
+from app.database import get_db
 
 from app.models.calculation import (
     Calculation,
@@ -7,6 +14,7 @@ from app.models.calculation import (
     Subtraction,
     Multiplication,
     Division,
+    Modulo
 )
 
 # Helper function to create a dummy user_id for testing.
@@ -150,3 +158,101 @@ def test_invalid_inputs_for_division():
     division = Division(user_id=dummy_user_id(), inputs=[10])
     with pytest.raises(ValueError, match="Inputs must be a list with at least two numbers."):
         division.get_result()
+
+######################### New tests ###########################
+
+
+client = TestClient(app)
+
+# Fake authenticated user object
+class FakeUser:
+    id = uuid.uuid4()
+
+# Override authentication dependency
+def override_current_user():
+    return FakeUser()
+
+app.dependency_overrides = {}
+app.dependency_overrides[get_db] = lambda: MagicMock()
+from app.auth.dependencies import get_current_active_user
+app.dependency_overrides[get_current_active_user] = override_current_user
+
+
+
+
+def test_create_modulo_success():
+    mock_db = MagicMock()
+
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    # patch factory to return a fake calc object
+    fake_calc = MagicMock()
+    fake_calc.id = uuid.uuid4()
+    fake_calc.user_id = FakeUser().id
+    fake_calc.type = "modulo"
+    fake_calc.inputs = [10, 3]
+    fake_calc.result = 1
+    fake_calc.created_at = "now"
+    fake_calc.updated_at = "now"
+
+    with patch("app.models.calculation.Calculation.create", return_value=fake_calc):
+        with patch.object(fake_calc, "get_result", return_value=1):
+            response = client.post(
+                "/calculations",
+                json={
+                    "type": "modulo",
+                    "inputs": [10, 3]
+                }
+            )
+
+    assert response.status_code == 201
+    data = response.json()
+
+    assert data["type"] == "modulo"
+    assert data["inputs"] == [10, 3]
+    assert data["result"] == 1
+
+
+def test_create_modulo_zero_divisor():
+    mock_db = MagicMock()
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    with patch("app.models.calculation.Calculation.create", side_effect=ValueError("Cannot modulo by zero")):
+        response = client.post(
+            "/calculations",
+            json={
+                "type": "modulo",
+                "inputs": [10, 0]
+            }
+        )
+
+    assert response.status_code == 400
+    assert "Cannot modulo by zero" in response.json()["detail"]
+
+def test_create_modulo_insufficient_inputs():
+    mock_db = MagicMock()
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    with patch("app.models.calculation.Calculation.create", side_effect=ValueError("At least two numbers are required")):
+        response = client.post(
+            "/calculations",
+            json={
+                "type": "modulo",
+                "inputs": [10]
+            }
+        )
+
+    assert response.status_code == 400
+    assert "two numbers" in response.json()["detail"]
+
+
+
+
+def test_factory_creates_modulo():
+    calc = AbstractCalculation.create("modulo", uuid.uuid4(), [10, 3])
+    assert isinstance(calc, Modulo)
+
+
+
+def test_modulo_enum_exists():
+    assert CalculationType.MODULO == "modulo"
