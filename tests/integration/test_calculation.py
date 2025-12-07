@@ -162,20 +162,19 @@ def test_invalid_inputs_for_division():
 ######################### New tests ###########################
 
 
-client = TestClient(app)
-
 # Fake authenticated user object
 class FakeUser:
     id = uuid.uuid4()
 
-# Override authentication dependency
-def override_current_user():
-    return FakeUser()
-
-app.dependency_overrides = {}
-app.dependency_overrides[get_db] = lambda: MagicMock()
+# Override dependencies BEFORE creating TestClient
 from app.auth.dependencies import get_current_active_user
-app.dependency_overrides[get_current_active_user] = override_current_user
+
+app.dependency_overrides[get_db] = lambda: MagicMock()
+app.dependency_overrides[get_current_active_user] = lambda: FakeUser()
+
+# Now create client
+client = TestClient(app)
+
 
 from datetime import datetime, timezone
 
@@ -212,46 +211,40 @@ def test_create_modulo_success():
     assert data["result"] == 1
 
 
-# def test_create_modulo_zero_divisor():
-#     mock_db = MagicMock()
-#     app.dependency_overrides[get_db] = lambda: mock_db
+def test_create_modulo_zero_divisor():
+    mock_db = MagicMock()
+    app.dependency_overrides[get_db] = lambda: mock_db
 
-#     with patch("app.models.calculation.Calculation.create", side_effect=ValueError("Cannot modulo by zero")):
-#         response = client.post(
-#             "/calculations",
-#             json={
-#                 "type": "modulo",
-#                 "inputs": [10, 0]
-#             }
-#         )
+    with patch("app.models.calculation.Calculation.create", side_effect=ValueError("Cannot modulo by zero")):
+        response = client.post(
+            "/calculations",
+            json={"type": "modulo", "inputs": [10, 0]},
+        )
 
-#     assert response.status_code == 400
-#     assert "Cannot modulo by zero" in response.json()["detail"]
+    assert response.status_code == 422
 
-# def test_create_modulo_insufficient_inputs():
-#     mock_db = MagicMock()
-#     app.dependency_overrides[get_db] = lambda: mock_db
+def test_create_modulo_insufficient_inputs():
+    mock_db = MagicMock()
+    app.dependency_overrides[get_db] = lambda: mock_db
 
-#     with patch("app.models.calculation.Calculation.create", side_effect=ValueError("At least two numbers are required")):
-#         response = client.post(
-#             "/calculations",
-#             json={
-#                 "type": "modulo",
-#                 "inputs": [10]
-#             }
-#         )
+    with patch("app.models.calculation.Calculation.create", side_effect=ValueError("At least two numbers are required")):
+        response = client.post(
+            "/calculations",
+            json={"type": "modulo", "inputs": [10]},
+        )
 
-#     assert response.status_code == 400
-#     assert "two numbers" in response.json()["detail"]
+    assert response.status_code == 422
+
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert "at least 2 items" in detail[0]["msg"]
 
 
 
-
-# def test_factory_creates_modulo():
-#     calc = AbstractCalculation.create("modulo", uuid.uuid4(), [10, 3])
-#     assert isinstance(calc, Modulo)
-
+def test_factory_creates_modulo():
+    calc = AbstractCalculation.create("modulo", uuid.uuid4(), [10, 3])
+    assert isinstance(calc, Modulo)
 
 
-# def test_modulo_enum_exists():
-#     assert CalculationType.MODULO == "modulo"
+def test_modulo_enum_exists():
+    assert CalculationType.MODULO == "modulo"
