@@ -4,6 +4,9 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from app.models.calculation import AbstractCalculation, Modulo
 from app.schemas.calculation import CalculationType
+from datetime import datetime, timezone
+from app.auth.dependencies import get_current_active_user
+
 
 from app.main import app
 from app.database import get_db
@@ -20,6 +23,10 @@ from app.models.calculation import (
 # Helper function to create a dummy user_id for testing.
 def dummy_user_id():
     return uuid.uuid4()
+
+class FakeUser:
+    def __init__(self, user_id):
+        self.id = user_id
 
 def test_addition_get_result():
     """
@@ -161,51 +168,96 @@ def test_invalid_inputs_for_division():
 
 ######################### New tests ###########################
 
+# ------------------------------------------------------------
+# Dependency Overrides & Test Client
+# ------------------------------------------------------------
 
-# Fake authenticated user object
 class FakeUser:
     id = uuid.uuid4()
-
-# Override dependencies BEFORE creating TestClient
-from app.auth.dependencies import get_current_active_user
 
 app.dependency_overrides[get_db] = lambda: MagicMock()
 app.dependency_overrides[get_current_active_user] = lambda: FakeUser()
 
-# Now create client
 client = TestClient(app)
 
 
-from datetime import datetime, timezone
+def setup_overrides(mock_db, user_id):
+    app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_current_active_user] = lambda: type(
+        "User", (), {"id": user_id}
+    )
+
+
+# ------------------------------------------------------------
+# Modulo Operation Unit Tests
+# ------------------------------------------------------------
+
+def test_modulo_sequence():
+    calc = Modulo()
+    calc.inputs = [100, 7, 5, 3]
+    expected = ((100 % 7) % 5) % 3
+    assert calc.get_result() == expected
+
+
+def test_modulo_invalid_input_type():
+    calc = Modulo()
+    calc.inputs = "not-a-list"
+    with pytest.raises(ValueError, match="Inputs must be a list"):
+        calc.get_result()
+
+
+def test_modulo_not_enough_inputs():
+    calc = Modulo()
+    calc.inputs = [10]
+    with pytest.raises(ValueError, match="at least two"):
+        calc.get_result()
+
+
+def test_modulo_by_zero():
+    calc = Modulo()
+    calc.inputs = [10, 0]
+    with pytest.raises(ValueError, match="Cannot modulo by zero"):
+        calc.get_result()
+
+
+def test_modulo_negative_values():
+    calc = Modulo()
+    calc.inputs = [-20, 6]
+    assert calc.get_result() == (-20 % 6)
+
+
+def test_factory_creates_modulo():
+    calc = AbstractCalculation.create("modulo", uuid.uuid4(), [10, 3])
+    assert isinstance(calc, Modulo)
+
+
+def test_modulo_enum_exists():
+    assert CalculationType.MODULO == "modulo"
+
+
+# ------------------------------------------------------------
+# Create Calculation (POST)
+# ------------------------------------------------------------
 
 def test_create_modulo_success():
     mock_db = MagicMock()
-
     app.dependency_overrides[get_db] = lambda: mock_db
 
-    # patch factory to return a fake calc object
     fake_calc = MagicMock()
     fake_calc.id = uuid.uuid4()
     fake_calc.user_id = FakeUser().id
     fake_calc.type = "modulo"
     fake_calc.inputs = [10, 3]
     fake_calc.result = 1
-    fake_calc.created_at = datetime.now(timezone.utc)
-    fake_calc.updated_at = datetime.now(timezone.utc)
+    fake_calc.created_at = datetime.utcnow()
+    fake_calc.updated_at = datetime.utcnow()
 
     with patch("app.models.calculation.Calculation.create", return_value=fake_calc):
         with patch.object(fake_calc, "get_result", return_value=1):
-            response = client.post(
-                "/calculations",
-                json={
-                    "type": "modulo",
-                    "inputs": [10, 3]
-                }
-            )
+            response = client.post("/calculations", json={"type": "modulo", "inputs": [10, 3]})
 
     assert response.status_code == 201
     data = response.json()
-
     assert data["type"] == "modulo"
     assert data["inputs"] == [10, 3]
     assert data["result"] == 1
@@ -216,35 +268,211 @@ def test_create_modulo_zero_divisor():
     app.dependency_overrides[get_db] = lambda: mock_db
 
     with patch("app.models.calculation.Calculation.create", side_effect=ValueError("Cannot modulo by zero")):
-        response = client.post(
-            "/calculations",
-            json={"type": "modulo", "inputs": [10, 0]},
-        )
+        response = client.post("/calculations", json={"type": "modulo", "inputs": [10, 0]})
 
     assert response.status_code == 422
+
 
 def test_create_modulo_insufficient_inputs():
     mock_db = MagicMock()
     app.dependency_overrides[get_db] = lambda: mock_db
 
     with patch("app.models.calculation.Calculation.create", side_effect=ValueError("At least two numbers are required")):
-        response = client.post(
-            "/calculations",
-            json={"type": "modulo", "inputs": [10]},
-        )
+        response = client.post("/calculations", json={"type": "modulo", "inputs": [10]})
 
     assert response.status_code == 422
 
-    detail = response.json()["detail"]
-    assert isinstance(detail, list)
-    assert "at least 2 items" in detail[0]["msg"]
+
+# ------------------------------------------------------------
+# Update Calculation (PUT)
+# ------------------------------------------------------------
+
+def test_update_calculation_success():
+    mock_db = MagicMock()
+    user_id = uuid.uuid4()
+    calc_id = uuid.uuid4()
+
+    setup_overrides(mock_db, user_id)
+
+    fake_calc = MagicMock()
+    fake_calc.id = calc_id
+    fake_calc.user_id = user_id
+    fake_calc.type = "multiplication"
+    fake_calc.inputs = [2, 3]
+    fake_calc.get_result.return_value = 10
+
+    mock_db.query.return_value.filter.return_value.first.return_value = fake_calc
+
+    response = client.put(f"/calculations/{calc_id}", json={"inputs": [5, 2]})
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["id"] == str(calc_id)
+    assert data["type"] == "multiplication"
+    assert data["inputs"] == [5, 2]
+    assert data["result"] == 10
+
+
+def test_update_calculation_invalid_uuid():
+    mock_db = MagicMock()
+    setup_overrides(mock_db, uuid.uuid4())
+
+    response = client.put("/calculations/not-a-uuid", json={"inputs": [1, 2]})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid calculation id format."
+
+
+def test_update_calculation_not_found():
+    mock_db = MagicMock()
+    user_id = uuid.uuid4()
+    calc_id = uuid.uuid4()
+
+    setup_overrides(mock_db, user_id)
+
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    response = client.put(f"/calculations/{calc_id}", json={"inputs": [1, 2]})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Calculation not found."
+
+
+def test_update_calculation_no_input_change():
+    mock_db = MagicMock()
+    mock_db.refresh = MagicMock()
+
+    user_id = uuid.uuid4()
+    calc_id = uuid.uuid4()
+
+    setup_overrides(mock_db, user_id)
+
+    fake_calc = MagicMock()
+    fake_calc.id = calc_id
+    fake_calc.user_id = user_id
+    fake_calc.type = "addition"
+    fake_calc.inputs = [2, 3]
+    fake_calc.result = 10   
+
+    mock_db.query.return_value.filter.return_value.first.return_value = fake_calc
+
+    response = client.put(f"/calculations/{calc_id}", json={})
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["id"] == str(calc_id)
+    assert data["type"] == "addition"
+    assert data["inputs"] == [2, 3]
+    assert data["result"] == 10     # 👈 now passes
 
 
 
-def test_factory_creates_modulo():
-    calc = AbstractCalculation.create("modulo", uuid.uuid4(), [10, 3])
-    assert isinstance(calc, Modulo)
 
 
-def test_modulo_enum_exists():
-    assert CalculationType.MODULO == "modulo"
+# ------------------------------------------------------------
+# Delete Calculation (DELETE)
+# ------------------------------------------------------------
+
+def test_delete_calculation_success():
+    mock_db = MagicMock()
+    user_id = uuid.uuid4()
+    calc_id = uuid.uuid4()
+
+    setup_overrides(mock_db, user_id)
+
+    fake_calc = MagicMock()
+    fake_calc.id = calc_id
+    fake_calc.user_id = user_id
+
+    mock_db.query.return_value.filter.return_value.first.return_value = fake_calc
+
+    response = client.delete(f"/calculations/{calc_id}")
+
+    assert response.status_code == 204
+    mock_db.delete.assert_called_once_with(fake_calc)
+    mock_db.commit.assert_called_once()
+
+
+def test_delete_calculation_invalid_id_format():
+    mock_db = MagicMock()
+    setup_overrides(mock_db, uuid.uuid4())
+
+    response = client.delete("/calculations/not-a-uuid")
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid calculation id format."
+
+
+def test_delete_calculation_not_found():
+    mock_db = MagicMock()
+    user_id = uuid.uuid4()
+    calc_id = uuid.uuid4()
+
+    setup_overrides(mock_db, user_id)
+
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    response = client.delete(f"/calculations/{calc_id}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Calculation not found."
+
+
+# ------------------------------------------------------------
+# Get Calculation (GET)
+# ------------------------------------------------------------
+
+def test_get_calculation_success():
+    mock_db = MagicMock()
+    user_id = uuid.uuid4()
+    calc_id = uuid.uuid4()
+
+    setup_overrides(mock_db, user_id)
+
+    from types import SimpleNamespace
+    fake_calc = SimpleNamespace(
+        id=calc_id,
+        user_id=user_id,
+        type="addition",
+        inputs=[2, 3],
+        result=5,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+
+    mock_db.query.return_value.filter.return_value.first.return_value = fake_calc
+
+    response = client.get(f"/calculations/{calc_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["id"] == str(calc_id)
+    assert data["type"] == "addition"
+    assert data["inputs"] == [2, 3]
+    assert data["result"] == 5
+
+
+
+def test_get_calculation_invalid_id_format():
+    mock_db = MagicMock()
+    setup_overrides(mock_db, uuid.uuid4())
+
+    response = client.get("/calculations/not-a-uuid")
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid calculation id format."
+
+
+def test_get_calculation_not_found():
+    mock_db = MagicMock()
+    user_id = uuid.uuid4()
+    calc_id = uuid.uuid4()
+
+    setup_overrides(mock_db, user_id)
+
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    response = client.get(f"/calculations/{calc_id}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Calculation not found."

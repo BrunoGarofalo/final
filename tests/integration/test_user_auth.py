@@ -2,9 +2,22 @@
 
 import pytest
 from uuid import UUID
+import uuid
 import pydantic_core
 from sqlalchemy.exc import IntegrityError
 from app.models.user import User
+from unittest.mock import MagicMock, patch, AsyncMock
+from datetime import datetime, timezone, timedelta
+from jose import jwt
+from datetime import datetime, timedelta
+
+from app.auth.jwt import decode_token, TokenType
+from app.core.config import settings
+
+from app.main import app, get_db
+from fastapi.testclient import TestClient
+
+client = TestClient(app)
 
 def test_password_hashing(db_session, fake_user_data):
     """Test password hashing and verification functionality"""
@@ -194,3 +207,152 @@ def test_missing_password_registration(db_session):
     # Adjust the expected error message
     with pytest.raises(ValueError, match="Password must be at least 6 characters long"):
         User.register(db_session, test_data)
+
+
+@pytest.mark.asyncio
+async def test_decode_token_success():
+    jti = "abc123"
+
+    payload = {
+        "sub": "user123",
+        "type": TokenType.ACCESS.value,
+        "exp": datetime.utcnow() + timedelta(minutes=5),
+        "jti": jti,
+    }
+
+    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.ALGORITHM)
+
+    with patch("app.auth.jwt.is_blacklisted", new=AsyncMock(return_value=False)):
+        decoded = await decode_token(token, TokenType.ACCESS)
+
+    assert decoded["sub"] == "user123"
+    assert decoded["type"] == TokenType.ACCESS.value
+    assert decoded["jti"] == jti
+
+
+
+
+@pytest.mark.asyncio
+async def test_decode_token_invalid_type():
+    payload = {
+        "sub": "user123",
+        "type": TokenType.REFRESH.value,  # Wrong type
+        "exp": datetime.utcnow() + timedelta(minutes=5),
+        "jti": "jti123",
+    }
+
+    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.ALGORITHM)
+
+    with patch("app.auth.jwt.is_blacklisted", new=AsyncMock(return_value=False)):
+        with pytest.raises(Exception) as exc:
+            await decode_token(token, TokenType.ACCESS)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid token type"
+
+
+
+@pytest.mark.asyncio
+async def test_decode_token_blacklisted():
+    payload = {
+        "sub": "user123",
+        "type": TokenType.ACCESS.value,
+        "exp": datetime.utcnow() + timedelta(minutes=5),
+        "jti": "blocked123",
+    }
+
+    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.ALGORITHM)
+
+    # FIXED PATCH PATH ↓↓↓
+    with patch("app.auth.jwt.is_blacklisted", new=AsyncMock(return_value=True)):
+        with pytest.raises(Exception) as exc:
+            await decode_token(token, TokenType.ACCESS)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Token has been revoked"
+
+
+@pytest.mark.asyncio
+async def test_decode_token_expired():
+    payload = {
+        "sub": "user123",
+        "type": TokenType.ACCESS.value,
+        "exp": datetime.utcnow() - timedelta(minutes=1),  # expired
+        "jti": "expired123",
+    }
+
+    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.ALGORITHM)
+
+    with patch("app.auth.jwt.is_blacklisted", new=AsyncMock(return_value=False)):
+        with pytest.raises(Exception) as exc:
+            await decode_token(token, TokenType.ACCESS)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Token has expired"
+
+
+@pytest.mark.asyncio
+async def test_decode_token_invalid_signature():
+    invalid_token = "not.a.valid.jwt"
+
+    with pytest.raises(Exception) as exc:
+        await decode_token(invalid_token, TokenType.ACCESS)
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Could not validate credentials"
+
+def setup_overrides(mock_db):
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+def test_login_form_success():
+    mock_db = MagicMock()
+    setup_overrides(mock_db)
+
+    auth_result = {
+        "access_token": "access123",
+        "refresh_token": "refresh123",  # not used here
+        "user": MagicMock(),            # not needed but harmless
+    }
+
+    with patch.object(User, "authenticate", return_value=auth_result) as mock_auth:
+        response = client.post(
+            "/auth/token",
+            data={
+                "username": "john",
+                "password": "secret123"
+            }
+        )
+
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["access_token"] == "access123"
+    assert data["token_type"] == "bearer"
+
+    # ensure authenticate was called properly
+    mock_auth.assert_called_once_with(mock_db, "john", "secret123")
+
+def test_login_form_invalid_credentials():
+    mock_db = MagicMock()
+    setup_overrides(mock_db)
+
+    with patch.object(User, "authenticate", return_value=None):
+        response = client.post(
+            "/auth/token",
+            data={
+                "username": "wrong",
+                "password": "invalid"
+            }
+        )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid username or password"
+
+
+def test_login_form_missing_fields():
+    mock_db = MagicMock()
+    setup_overrides(mock_db)
+
+    response = client.post("/auth/token", data={"username": "john"})
+
+    assert response.status_code == 422

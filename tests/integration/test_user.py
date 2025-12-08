@@ -10,12 +10,23 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
+from app.main import app
+from unittest.mock import MagicMock, patch
+import uuid
+from app.database import get_db
+from datetime import datetime, timedelta, timezone
+
 
 from app.models.user import User
 from tests.conftest import create_fake_user, managed_db_session
 
 # Use the logger configured in conftest.py
 logger = logging.getLogger(__name__)
+from fastapi.testclient import TestClient
+
+client = TestClient(app)
+
+
 
 # ======================================================================================
 # Basic Connection & Session Tests
@@ -325,3 +336,184 @@ def test_error_handling():
             session.execute(text("INVALID SQL"))
     assert "INVALID SQL" in str(exc_info.value)
 
+
+
+def test_register_success(monkeypatch):
+    # Fake user returned by the register method
+    mock_user = MagicMock()
+    mock_user.id = uuid.uuid4()
+    mock_user.username = "john"
+    mock_user.email = "john@example.com"
+    mock_user.first_name = "John"
+    mock_user.last_name = "Doe"
+    mock_user.is_active = True
+    mock_user.is_verified = False
+
+    # Patch User.register
+    monkeypatch.setattr(
+        "app.models.user.User.register",
+        lambda db, data: mock_user
+    )
+
+    # Mock DB session object
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    mock_db.refresh = MagicMock()
+
+    # Correct way to override dependency
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    payload = {
+        "first_name": "John",
+        "last_name": "Doe",
+        "email": "john@example.com",
+        "username": "john",
+        "password": "SecurePass123!",
+        "confirm_password": "SecurePass123!",
+    }
+
+    response = client.post("/auth/register", json=payload)
+
+    assert response.status_code == 201
+    data = response.json()
+
+    assert data["username"] == "john"
+    assert data["email"] == "john@example.com"
+
+    # cleanup
+    app.dependency_overrides.clear()
+
+
+def test_register_value_error(monkeypatch):
+    # Force an error when User.register is called
+    def mock_register(db, data):
+        raise ValueError("Email already exists")
+
+    # Patch User.register to throw error
+    monkeypatch.setattr("app.models.user.User.register", mock_register)
+
+    # Mock database session
+    mock_db = MagicMock()
+
+    # CORRECT dependency override
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    payload = {
+        "first_name": "John",
+        "last_name": "Doe",
+        "email": "john@example.com",
+        "username": "john",
+        "password": "SecurePass123!",
+        "confirm_password": "SecurePass123!",
+    }
+
+    response = client.post("/auth/register", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Email already exists"
+
+    # cleanup
+    app.dependency_overrides.clear()
+
+def setup_overrides(mock_db):
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+def test_login_invalid_credentials():
+    mock_db = MagicMock()
+    setup_overrides(mock_db)
+
+    with patch.object(User, "authenticate", return_value=None):
+        response = client.post(
+            "/auth/login",
+            json={"username": "wrong", "password": "wrongpass"}
+        )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid username or password"
+
+    mock_db.commit.assert_not_called()
+
+def test_login_success():
+    mock_db = MagicMock()
+    setup_overrides(mock_db)
+
+    mock_user = MagicMock()
+    mock_user.id = uuid.uuid4()  # FIXED
+    mock_user.username = "john"
+    mock_user.email = "john@example.com"
+    mock_user.first_name = "John"
+    mock_user.last_name = "Doe"
+    mock_user.is_active = True
+    mock_user.is_verified = True
+
+    auth_result = {
+        "user": mock_user,
+        "access_token": "access123",
+        "refresh_token": "refresh123",
+        "expires_at": datetime.now(),  # naive datetime is fine
+    }
+
+    with patch.object(User, "authenticate", return_value=auth_result):
+        response = client.post(
+            "/auth/login",
+            json={"username": "john", "password": "secret123"}
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["access_token"] == "access123"
+    assert data["refresh_token"] == "refresh123"
+    assert data["token_type"] == "bearer"
+    assert data["user_id"] == str(mock_user.id)  # UUID becomes string
+
+def test_register_calls_db_add(monkeypatch):
+    mock_db = MagicMock()
+
+    # Patch hash_password to avoid hashing during the test
+    monkeypatch.setattr(User, "hash_password", lambda pwd: "hashed123")
+
+    user_data = {
+        "first_name": "Alice",
+        "last_name": "Smith",
+        "email": "alice@example.com",
+        "username": "alice",
+        "password": "StrongPass123"
+    }
+
+    # Simulate no existing user
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    user = User.register(mock_db, user_data)
+
+    # db.add() should be called with the created user instance
+    mock_db.add.assert_called_once_with(user)
+
+    # Ensure password hashing happened
+    assert user.password == "hashed123"
+
+def test_register_calls_hash_password(monkeypatch):
+    mock_db = MagicMock()
+
+    # Spy on hash_password
+    mock_hash = MagicMock(return_value="hashed321")
+    monkeypatch.setattr(User, "hash_password", mock_hash)
+
+    user_data = {
+        "first_name": "Bob",
+        "last_name": "Johnson",
+        "email": "bob@example.com",
+        "username": "bobby",
+        "password": "MySecretPass"
+    }
+
+    # Simulate no duplicate user found
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    user = User.register(mock_db, user_data)
+
+    # Verify the password hashing method was called correctly
+    mock_hash.assert_called_once_with("MySecretPass")
+
+    # And the resulting user has the hashed password applied
+    assert user.password == "hashed321"
