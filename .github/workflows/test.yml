@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [ add_modulo ]
+    branches: [ main ]
   pull_request:
-    branches: [ add_modulo ]
+    branches: [ main ]
 
 jobs:
   test:
